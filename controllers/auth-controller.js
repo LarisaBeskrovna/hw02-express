@@ -1,8 +1,12 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const jimp = require("jimp");
+const path = require("path");
+const fs = require("fs/promises");
 const User = require("../models/User");
 const HttpError = require("../helpers/httpError");
 const ctrlWrapper = require("../decorators/ctrlWrapper");
+const gravatar = require("gravatar");
 
 const { JWT_SECRET } = process.env;
 
@@ -14,12 +18,22 @@ const signup = async (req, res) => {
   }
 
   const hashPassword = await bcrypt.hash(password, 10);
-  const newUser = await User.create({ ...req.body, password: hashPassword });
+  const avatarURL = gravatar.url(email, {
+    s: "200",
+    r: "pg",
+    d: "identicon",
+  });
+  const newUser = await User.create({
+    ...req.body,
+    password: hashPassword,
+    avatarURL,
+  });
 
   res.status(201).json({
     user: {
       email: newUser.email,
       subscription: "starter",
+      avatarURL: newUser.avatarURL,
     },
   });
 };
@@ -93,10 +107,40 @@ const refresh = async (req, res) => {
   });
 };
 
+const avatars = async (req, res) => {
+  const { _id: userId } = req.user;
+  if (!userId) {
+    return res.status(401).json({ message: "Not authorized" });
+  }
+  try {
+    const uniqueName = `${userId}_${Date.now()}${path.extname(
+      req.file.originalname
+    )}`;
+    const publicAvatars = path.join(process.cwd(), "public/avatars");
+    const avatarPath = path.join(publicAvatars, uniqueName);
+    const imagePath = req.file.path;
+    const image = await jimp.read(imagePath);
+    await image.resize(200, 200);
+    await image.writeAsync(imagePath);
+    await fs.rename(imagePath, avatarPath);
+    const avatarURL = `/avatars/${uniqueName}`;
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { avatarURL },
+      { new: true }
+    );
+    res.status(200).json({ updatedUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 module.exports = {
   signup: ctrlWrapper(signup),
   signin: ctrlWrapper(signin),
   getCurrent: ctrlWrapper(getCurrent),
   signout: ctrlWrapper(signout),
   refresh: ctrlWrapper(refresh),
+  avatars: ctrlWrapper(avatars),
 };
